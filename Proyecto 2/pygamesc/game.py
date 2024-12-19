@@ -1,6 +1,10 @@
 import pygame
 import random
-from sklearn.tree import DecisionTreeClassifier  # Importar el árbol de decisión
+import numpy as np
+from tensorflow.keras.models import load_model
+import pickle
+from red_neuronal import entrenar_red_neuronal
+from arbol_decision import entrenar_arbol_decision
 
 # Inicializar Pygame
 pygame.init()
@@ -70,6 +74,62 @@ bala_disparada = False
 # Variables para el fondo en movimiento
 fondo_x1 = 0
 fondo_x2 = w
+
+# Cargar el modelo entrenado de la red neuronal
+#modelo_red_neuronal = None
+#modelo = load_model("modelo_red_neuronal.h5")
+
+#modelo_red_neuronal = load_model("modelo_red_neuronal.h5")
+
+def cargar_modelo():
+    global modelo_red_neuronal
+    try:
+        modelo_red_neuronal = load_model("modelo_red_neuronal.h5")  # Cargar modelo .h5
+        print("Modelo cargado correctamente.")
+    except FileNotFoundError:
+        print("No se encontró un modelo previamente entrenado.")
+    except Exception as e:
+        print(f"Error al cargar el modelo: {e}")
+
+# Función para predecir el salto usando el modelo de red neuronal
+def predecir_salto(velocidad_bala, distancia):
+    if modelo_red_neuronal:
+        # Convertir la entrada a un array NumPy compatible con el modelo
+        entrada = np.array([[velocidad_bala, distancia]], dtype=np.float32)
+        
+        # Realizar la predicción
+        prediccion = modelo_red_neuronal.predict(entrada)
+        
+        # Mostrar la predicción
+        print("Valor de predicción:", prediccion[0][0])
+        
+        # Determinar si debe saltar según el umbral (0.5)
+        if prediccion[0][0] >= 0.5:
+            return 1  # Saltar
+        else:
+            return 0  # No saltar
+    
+    # Si no hay modelo cargado, no saltar
+    print("No se ha cargado un modelo.")
+    return 0
+
+# Función para cargar el modelo entrenado de Árbol de Decisión
+def cargar_modelo_arbol():
+    global modelo_arbol_decision
+    try:
+        with open("modelo_arbol_decision.pkl", "rb") as archivo_modelo:
+            modelo_arbol_decision = pickle.load(archivo_modelo)
+            print("Modelo de Árbol de Decisión cargado correctamente.")
+    except FileNotFoundError:
+        print("No se encontró un modelo previamente entrenado de Árbol de Decisión.")
+
+# Función para predecir el salto usando el modelo de Árbol de Decisión
+def predecir_salto_arbol(velocidad_bala, distancia):
+    if modelo_arbol_decision:
+        prediccion = modelo_arbol_decision.predict([[velocidad_bala, distancia]])  # Usamos la predicción del modelo
+        #print("Valor Predicho por Árbol de Decisión:", prediccion[0])
+        return prediccion[0]  # Retorna 1 si saltó, 0 si no saltó
+    return 0  # Si no hay modelo cargado, no saltar
 
 # Función para disparar la bala
 def disparar_bala():
@@ -163,13 +223,25 @@ def pausa_juego():
     else:
         print("Juego reanudado.")
 
+
 # Función para mostrar el menú y seleccionar el modo de juego
 def mostrar_menu():
     global menu_activo, modo_auto
+    global modelo_actual 
     pantalla.fill(NEGRO)
-    texto = fuente.render("Presiona 'A' para Auto, 'M' para Manual, o 'Q' para Salir", True, BLANCO)
-    pantalla.blit(texto, (w // 4, h // 2))
-    pygame.display.flip()
+    texto = fuente.render("1.- Juego Manual", True, BLANCO)
+    texto1 = fuente.render("2.- Redes Neuronales", True, BLANCO)
+    texto2 = fuente.render("3.- Árbol de Decisión", True, BLANCO)
+    texto3 = fuente.render("4.- Salir", True, BLANCO)
+    x_centro = w // 2
+    y_inicial = h // 3
+    espacio_entre_renglones = 50  # Espaciado entre cada renglón
+
+    pantalla.blit(texto, (x_centro - texto.get_width() // 2, y_inicial))
+    pantalla.blit(texto1, (x_centro - texto1.get_width() // 2, y_inicial + espacio_entre_renglones))
+    pantalla.blit(texto2, (x_centro - texto2.get_width() // 2, y_inicial + 2 * espacio_entre_renglones))
+    pantalla.blit(texto3, (x_centro - texto3.get_width() // 2, y_inicial + 3 * espacio_entre_renglones))
+    pygame.display.flip() 
 
     while menu_activo:
         for evento in pygame.event.get():
@@ -177,13 +249,25 @@ def mostrar_menu():
                 pygame.quit()
                 exit()
             if evento.type == pygame.KEYDOWN:
-                if evento.key == pygame.K_a:
-                    modo_auto = True
-                    menu_activo = False
-                elif evento.key == pygame.K_m:
+                if evento.key == pygame.K_1:
+                    print("MODO MANUAL")
                     modo_auto = False
                     menu_activo = False
-                elif evento.key == pygame.K_q:
+                elif evento.key == pygame.K_2:
+                    print("REDES NEURONALES")
+                    modo_auto = True
+                    menu_activo = False
+                    entrenar_red_neuronal(datos_modelo)
+                    cargar_modelo()
+                    modelo_actual = "red_neuronal"
+                elif evento.key == pygame.K_3:
+                    print("ARBOL DE DECISION")
+                    modo_auto = True
+                    menu_activo = False
+                    entrenar_arbol_decision(datos_modelo)
+                    cargar_modelo_arbol()
+                    modelo_actual = "arbol"
+                elif evento.key == pygame.K_4:
                     print("Juego terminado. Datos recopilados:", datos_modelo)
                     pygame.quit()
                     exit()
@@ -202,30 +286,12 @@ def reiniciar_juego():
     print("Datos recopilados para el modelo: ", datos_modelo)
     mostrar_menu()  # Mostrar el menú de nuevo para seleccionar modo
 
-# Entrenar el árbol de decisión
-def entrenar_arbol():
-    if len(datos_modelo) > 10:  # Esperamos tener suficientes datos para entrenar
-        X = [d[0:2] for d in datos_modelo]  # Las características son la velocidad de la bala y la distancia
-        y = [d[2] for d in datos_modelo]    # La etiqueta es si el jugador saltó o no (0 o 1)
-        clf = DecisionTreeClassifier()  # Crear el árbol de decisión
-        clf.fit(X, y)  # Entrenar el modelo
-        return clf
-    return None
-
-# Función para predecir el salto usando el modelo entrenado
-def predecir_salto(clf):
-    if clf:
-        X_pred = [[velocidad_bala, abs(jugador.x - bala.x)]]
-        return clf.predict(X_pred)[0]
-    return 0  # Si no hay modelo entrenado, no saltar
-
 def main():
     global salto, en_suelo, bala_disparada
 
     reloj = pygame.time.Clock()
     mostrar_menu()  # Mostrar el menú al inicio
     correr = True
-    clf = None  # Árbol de decisión no entrenado aún
 
     while correr:
         for evento in pygame.event.get():
@@ -250,14 +316,25 @@ def main():
                 # Guardar los datos si estamos en modo manual
                 guardar_datos()
             else:
-                # Modo automático: predecir si debe saltar con el árbol de decisión
-                clf = entrenar_arbol()
-                if clf:
-                    salto_predicho = predecir_salto(clf)
-                    if salto_predicho == 1 and en_suelo:
-                        salto = True
-                        en_suelo = False
+                distancia = abs(jugador.x - bala.x)
+                # Modo automático: el modelo decide si saltar
+                if modelo_actual == "arbol":
+                    # Usamos el modelo de árbol de decisión
+                    decision_salto = predecir_salto_arbol(velocidad_bala, distancia)
+                    #print("Arbol: ", decision_salto)
+                elif modelo_actual == "red_neuronal":
+                    # Usamos el modelo de redes neuronales
+                    decision_salto = predecir_salto(velocidad_bala, distancia)
+                   # print("REdes neu: ", decision_salto)
+                else:
+                    #No se selecciono ningun modelo
+                    decision_salto = 0
 
+                if decision_salto == 1 and en_suelo:
+                    salto = True
+                    en_suelo = False
+                if salto:
+                    manejar_salto()
             # Actualizar el juego
             if not bala_disparada:
                 disparar_bala()
